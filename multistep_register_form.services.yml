@@ -1,0 +1,4 @@
+services:
+  multistep_register_form.storage_manager:
+    class: Drupal\multistep_register_form\MultiStepRegisterStorageManager
+    arguments: ['@database', '@messenger']

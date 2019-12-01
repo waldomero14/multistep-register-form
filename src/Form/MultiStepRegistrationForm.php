@@ -8,7 +8,9 @@ use Drupal\Core\Ajax\ReplaceCommand;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Messenger\MessengerInterface;
 use Drupal\Core\Render\Element;
+use Drupal\multistep_register_form\MultiStepRegisterStorageManager;
 use Egulias\EmailValidator\EmailValidator;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -18,6 +20,8 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class MultiStepRegistrationForm extends FormBase {
 
   /**
+   * The entity type manager.
+   *
    * Drupal\Core\Entity\EntityTypeManagerInterface definition.
    *
    * @var \Drupal\Core\Entity\EntityTypeManagerInterface
@@ -31,6 +35,23 @@ class MultiStepRegistrationForm extends FormBase {
    */
   protected $emailValidator;
 
+  /**
+   * The multistep register form manager.
+   *
+   * @var \Drupal\multistep_register_form\MultiStepRegisterStorageManager
+   */
+  protected $registerStorage;
+
+  /**
+   * The messenger service.
+   *
+   * @var \Drupal\Core\Messenger\MessengerInterface
+   */
+  protected $messenger;
+
+  /**
+   * @var string The form wrapper ID.
+   */
   protected $formWrapperId;
 
   /**
@@ -42,10 +63,14 @@ class MultiStepRegistrationForm extends FormBase {
    */
   public function __construct(
     EntityTypeManagerInterface $entity_type_manager,
-    EmailValidator $email_validator
+    EmailValidator $email_validator,
+    MultiStepRegisterStorageManager $register_storage,
+    MessengerInterface $messenger
   ) {
     $this->entityTypeManager = $entity_type_manager;
     $this->emailValidator = $email_validator;
+    $this->registerStorage = $register_storage;
+    $this->messenger = $messenger;
     $this->formWrapperId = Html::getId('multistep-registration-ajax');
   }
 
@@ -55,7 +80,9 @@ class MultiStepRegistrationForm extends FormBase {
   public static function create(ContainerInterface $container) {
     return new static(
       $container->get('entity_type.manager'),
-      $container->get('email.validator')
+      $container->get('email.validator'),
+      $container->get('multistep_register_form.storage_manager'),
+      $container->get('messenger')
     );
   }
 
@@ -230,7 +257,7 @@ class MultiStepRegistrationForm extends FormBase {
     // Get the email field and email messages elements.
     $element = $form['mail'];
     $messages = $form['email_messages'];
-    $email = $form_state->getValue('email');
+    $email = $form_state->getValue('mail');
     if (!empty($email)) {
       // Validate the email is valid; if not, show an error and mark the field
       // with the class 'error'.
@@ -366,6 +393,7 @@ class MultiStepRegistrationForm extends FormBase {
   protected function validateExistingEmail(string $email) {
     $exists = FALSE;
     if ($email) {
+      $email = strtolower($email);
       $query = $this->entityTypeManager->getStorage('user')->getQuery()
         ->condition('mail', $email)
         ->execute();
@@ -394,15 +422,18 @@ class MultiStepRegistrationForm extends FormBase {
   public function submitForm(array &$form, FormStateInterface $form_state) {
     $form_state->setRebuild();
     $form_state->setStorage([]);
+    $form_state->cleanValues();
     $values = $form_state->getValues();
-    dpm($values);
-    $user = $this->entityTypeManager->getStorage('user')->create($values);
+    $mail = $values['mail'];
+    // Insert the values in the table.
+    $this->registerStorage->insert($values);
+    // Create the new user.
+    $user = $this->entityTypeManager->getStorage('user')->create(['mail' => $mail]);
     $result = $user->save();
-    dpm($result);
     // Display result.
     if ($result) {
-      \Drupal::messenger()
-        ->addMessage($this->t('The new user %email has been created.', ['%email' => $values['mail']]));
+      $this->messenger
+        ->addMessage($this->t('The new user %email has been created.', ['%email' => $mail]));
     }
   }
 

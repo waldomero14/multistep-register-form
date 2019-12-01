@@ -1,0 +1,68 @@
+<?php
+
+use Drupal\Core\Database\Database;
+
+/**
+ * Implements hook_schema().
+ *
+ * Defines the database tables used on this module.
+ */
+function multistep_register_form_schema() {
+  $schema['multistep_registration_form_fields'] = [
+    'description' => 'Stores the user fields for the multistep registration form.',
+    'fields' => [
+      'mail' => [
+        'description' => 'The email of the user.',
+        'type' => 'varchar_ascii',
+        'length' => 255,
+        'not null' => TRUE,
+      ],
+      'field_first_name' => [
+        'description' => 'The user first name.',
+        'type' => 'varchar_ascii',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => '',
+      ],
+      'field_last_name' => [
+        'description' => 'The user last name.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => '',
+      ],
+      'field_gender' => [
+        'description' => 'The user gender.',
+        'type' => 'varchar_ascii',
+        'length' => 2,
+        'not null' => FALSE,
+        'default' => '',
+      ],
+      'field_city' => [
+        'description' => 'The user city.',
+        'type' => 'varchar_ascii',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => '',
+      ],
+      'field_phone' => [
+        'description' => 'The user phone.',
+        'type' => 'varchar_ascii',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'field_address' => [
+        'description' => 'The user address.',
+        'type' => 'varchar_ascii',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => '',
+      ],
+    ],
+    'primary key' => ['mail'],
+    'unique keys' => ['mail' => ['mail']],
+  ];
+
+  return $schema;
+}
