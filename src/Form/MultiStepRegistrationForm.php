@@ -96,7 +96,7 @@ class MultiStepRegistrationForm extends FormBase {
       '#markup' => '',
     ];
 
-    $form['email'] = [
+    $form['mail'] = [
       '#type' => 'email',
       '#title' => $this->t('Email'),
       '#required' => TRUE,
@@ -113,41 +113,44 @@ class MultiStepRegistrationForm extends FormBase {
       ],
     ];
 
-    $form['first_name'] = [
+    $form['field_first_name'] = [
       '#type' => 'textfield',
       '#title' => $this->t('First Name'),
       '#required' => TRUE,
       '#step' => 1,
     ];
 
-    $form['last_name'] = [
+    $form['field_last_name'] = [
       '#type' => 'textfield',
       '#title' => $this->t('Last Name'),
       '#required' => TRUE,
       '#step' => 1,
     ];
 
-    $form['gender'] = [
+    $form['field_gender'] = [
       '#type' => 'radios',
       '#title' => $this->t('Gender'),
       '#required' => TRUE,
       '#step' => 1,
-      '#options' => ['M', 'F'],
+      '#options' => [
+        'M' => 'M',
+        'F' => 'F',
+      ],
     ];
 
     // Step 2 fields.
-    $form['city'] = [
+    $form['field_city'] = [
       '#type' => 'textfield',
       '#title' => $this->t('City'),
       '#required' => TRUE,
       '#step' => 2,
     ];
-    $form['phone'] = [
+    $form['field_phone'] = [
       '#type' => 'tel',
       '#title' => $this->t('Phone Number'),
       '#step' => 2,
     ];
-    $form['address'] = [
+    $form['field_address'] = [
       '#type' => 'textfield',
       '#title' => $this->t('Address'),
       '#step' => 2,
@@ -225,7 +228,7 @@ class MultiStepRegistrationForm extends FormBase {
    */
   public function validateEmailCallback($form, FormStateInterface $form_state) {
     // Get the email field and email messages elements.
-    $element = $form['email'];
+    $element = $form['mail'];
     $messages = $form['email_messages'];
     $email = $form_state->getValue('email');
     if (!empty($email)) {
@@ -378,9 +381,9 @@ class MultiStepRegistrationForm extends FormBase {
    */
   public function validateForm(array &$form, FormStateInterface $form_state) {
     // Validate the Email is not taken.
-    $email = $form_state->getValue('email');
+    $email = $form_state->getValue('mail');
     if (!empty($email) && $this->validateExistingEmail($email)) {
-      $form_state->setError($form['email'], $this->t('The email %email is already taken.', ['%email' => $email]));
+      $form_state->setError($form['mail'], $this->t('The email %email is already taken.', ['%email' => $email]));
     }
     parent::validateForm($form, $form_state);
   }
@@ -391,8 +394,16 @@ class MultiStepRegistrationForm extends FormBase {
   public function submitForm(array &$form, FormStateInterface $form_state) {
     $form_state->setRebuild();
     $form_state->setStorage([]);
+    $values = $form_state->getValues();
+    dpm($values);
+    $user = $this->entityTypeManager->getStorage('user')->create($values);
+    $result = $user->save();
+    dpm($result);
     // Display result.
-    \Drupal::messenger()->addMessage($this->t('The new user %email has been created.', ['%email' => $form_state->getValue('email')]));
+    if ($result) {
+      \Drupal::messenger()
+        ->addMessage($this->t('The new user %email has been created.', ['%email' => $values['mail']]));
+    }
   }
 
 }
