@@ -5,12 +5,12 @@ namespace Drupal\multistep_register_form\Form;
 use Drupal\Component\Utility\Html;
 use Drupal\Core\Ajax\AjaxResponse;
 use Drupal\Core\Ajax\ReplaceCommand;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Render\Element;
-use Drupal\Core\Utility\LinkGeneratorInterface;
+use Egulias\EmailValidator\EmailValidator;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-use Drupal\Core\Entity\EntityTypeManagerInterface;
 
 /**
  * Class MultiStepRegistrationForm.
@@ -24,15 +24,28 @@ class MultiStepRegistrationForm extends FormBase {
    */
   protected $entityTypeManager;
 
-  protected  $formWrapperId;
+  /**
+   * The email validator.
+   *
+   * @var \Egulias\EmailValidator\EmailValidator
+   */
+  protected $emailValidator;
+
+  protected $formWrapperId;
 
   /**
    * Constructs a new MultiStepRegistrationForm object.
+   *
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+   * @param \Egulias\EmailValidator\EmailValidator $email_validator
+   *   The email validator.
    */
   public function __construct(
-    EntityTypeManagerInterface $entity_type_manager
+    EntityTypeManagerInterface $entity_type_manager,
+    EmailValidator $email_validator
   ) {
     $this->entityTypeManager = $entity_type_manager;
+    $this->emailValidator = $email_validator;
     $this->formWrapperId = Html::getId('multistep-registration-ajax');
   }
 
@@ -41,7 +54,8 @@ class MultiStepRegistrationForm extends FormBase {
    */
   public static function create(ContainerInterface $container) {
     return new static(
-      $container->get('entity_type.manager')
+      $container->get('entity_type.manager'),
+      $container->get('email.validator')
     );
   }
 
@@ -56,11 +70,11 @@ class MultiStepRegistrationForm extends FormBase {
    * {@inheritdoc}
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
+    // Get the stored values from the storage.
     $values = $form_state->getStorage();
     $current_step = $form_state->get('current_step') ?? 1;
     $form_state->set('current_step', $current_step);
-    dpm('storafe');
-    dpm($form_state->getStorage());
+    // Set the latest step to know when to show the buttons.
     $latest_step = 3;
     $form['#prefix'] = "<div id='$this->formWrapperId'>";
     $form['#suffix'] = '</div>';
@@ -75,10 +89,9 @@ class MultiStepRegistrationForm extends FormBase {
         '@total' => $latest_step,
       ])
     ];
-
     $form['email_messages'] = [
       '#type' => 'markup',
-      '#prefix' => "<div id='multistep-email-messages'>",
+      '#prefix' => '<div id="' . Html::getId('multistep-email-messages') . '">',
       '#suffix' => '</div>',
       '#markup' => '',
     ];
@@ -91,7 +104,7 @@ class MultiStepRegistrationForm extends FormBase {
       '#prefix' => '<div id="' . Html::getId('multistep-email') . '">',
       '#suffix' => '</div>',
       '#ajax' => [
-        'callback' => [$this, 'validateExistingEmail'],
+        'callback' => [$this, 'validateEmailCallback'],
         'event' => 'change',
         'progress' => [
           'type' => 'throbber',
@@ -147,10 +160,12 @@ class MultiStepRegistrationForm extends FormBase {
       '#markup' => $this->t('We are ready. Click on finish to create the new user.'),
       '#step' => 3,
     ];
-
+    $form['actions'] = [
+      '#type' => 'actions',
+    ];
     // Show the 'Back' and the 'Reset' buttons when the step is greater than 1.
     if ($current_step > 1) {
-      $form['reset'] = [
+      $form['actions']['reset'] = [
         '#type' => 'submit',
         '#value' => $this->t('Reset'),
         '#limit_validation_errors' => [],
@@ -161,7 +176,7 @@ class MultiStepRegistrationForm extends FormBase {
         '#submit' => ['::resetFormStep'],
       ];
 
-      $form['back'] = [
+      $form['actions']['back'] = [
         '#type' => 'submit',
         '#value' => $this->t('Back'),
         '#limit_validation_errors' => [],
@@ -173,7 +188,7 @@ class MultiStepRegistrationForm extends FormBase {
       ];
     }
 
-    $form['submit'] = [
+    $form['actions']['submit'] = [
       '#type' => 'submit',
       '#value' => $this->t('Finish'),
       '#ajax' => [
@@ -181,27 +196,53 @@ class MultiStepRegistrationForm extends FormBase {
         'callback' => [$this, 'ajaxCallback'],
       ],
     ];
+    // If this is not the latest step, use a different submit callback.
     if ($latest_step !== $current_step) {
-      $form['submit']['#submit'] = ['::increaseFormStep'];
-      $form['submit']['#value'] = $this->t('Forward');
+      $form['actions']['submit']['#submit'] = ['::increaseFormStep'];
+      $form['actions']['submit']['#value'] = $this->t('Forward');
     }
-
+    // Set the default values for the form elements.
     self::setDefaultValuesFromFormState($form, $values);
-
+    // Hide the form elements that doesn't belong to the current step.
     self::hideFormFieldsNoStep($form, $current_step);
 
     return $form;
   }
 
-  public function validateExistingEmail($form, FormStateInterface $form_state) {
+  /**
+   * Ajax callback that validates the email is valid and is free to use.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   *
+   * @return \Drupal\Core\Ajax\AjaxResponse
+   *   The ajax response object.
+   *
+   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
+   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
+   */
+  public function validateEmailCallback($form, FormStateInterface $form_state) {
+    // Get the email field and email messages elements.
     $element = $form['email'];
     $messages = $form['email_messages'];
     $email = $form_state->getValue('email');
-    dpm($email);
-    if (!empty($email) && !\Drupal::service('email.validator')->isValid($email)) {
-      $messages['#markup'] = $this->t('<div class="messages messages--error">The email is not valid.</div>');
-      $element['#attributes']['class'][] = 'error';
+    if (!empty($email)) {
+      // Validate the email is valid; if not, show an error and mark the field
+      // with the class 'error'.
+      if (!$this->emailValidator->isValid($email)) {
+        $messages['#markup'] = $this->t('<div class="messages messages--error">The email %email is not valid.</div>', ['%email' => $email]);
+        $element['#attributes']['class'][] = 'error';
+      }
+      // Validate the email is not taken; if not, show an error and mark the
+      // field with the class 'error'.
+      if ($this->validateExistingEmail($email)) {
+        $messages['#markup'] = $this->t('<div class="messages messages--error">The email %email is already taken.</div>', ['%email' => $email]);
+        $element['#attributes']['class'][] = 'error';
+      }
     }
+    // Add the needed replace commands.
     $response = new AjaxResponse();
     $response->addCommand(new ReplaceCommand('#multistep-email', $element));
     $response->addCommand(new ReplaceCommand('#multistep-email-messages', $messages));
@@ -209,6 +250,14 @@ class MultiStepRegistrationForm extends FormBase {
     return $response;
   }
 
+  /**
+   * Sets the default value of the form elements using the form storage.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   */
   protected static function setDefaultValuesFromFormState(array &$form, array $values) {
     $children = Element::getVisibleChildren($form);
     foreach ($children as $child) {
@@ -218,16 +267,45 @@ class MultiStepRegistrationForm extends FormBase {
     }
   }
 
+  /**
+   * Returns the complete form inside the ajax wrapper.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   *
+   * @return array
+   *   The complete form.
+   */
   public function ajaxCallback($form, FormStateInterface $form_state): array {
     return $form;
   }
 
+  /**
+   * Submit callback that resets the Form state. Also sets the current step to
+   * one.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   */
   public static function resetFormStep($form, FormStateInterface $form_state) {
     $form_state->setRebuild();
     $form_state->setStorage([]);
     $form_state->set('current_step', 1);
   }
 
+  /**
+   * Submit callback that increases the Form current step to go one step
+   * forward.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   */
   public static function increaseFormStep($form, FormStateInterface $form_state) {
     $current_step = $form_state->get('current_step');
     $current_step++;
@@ -240,6 +318,14 @@ class MultiStepRegistrationForm extends FormBase {
     }
   }
 
+  /**
+   * Submit callback that decreases the Form current step to go one step back.
+   *
+   * @param $form
+   *   The form structure array.
+   * @param \Drupal\Core\Form\FormStateInterface $form_state
+   *   The form state object.
+   */
   public static function decreaseFormStep($form, FormStateInterface $form_state) {
     $current_step = $form_state->get('current_step');
     --$current_step;
@@ -263,9 +349,39 @@ class MultiStepRegistrationForm extends FormBase {
   }
 
   /**
+   * Validates an email is not already in use by another user.
+   *
+   * @param string $email
+   *   The email to be validated.
+   *
+   * @return bool
+   *   Returns TRUE if the email is already taken.
+   *
+   * @throws \Drupal\Component\Plugin\Exception\InvalidPluginDefinitionException
+   * @throws \Drupal\Component\Plugin\Exception\PluginNotFoundException
+   */
+  protected function validateExistingEmail(string $email) {
+    $exists = FALSE;
+    if ($email) {
+      $query = $this->entityTypeManager->getStorage('user')->getQuery()
+        ->condition('mail', $email)
+        ->execute();
+      if ($query){
+        $exists = TRUE;
+      }
+    }
+    return $exists;
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function validateForm(array &$form, FormStateInterface $form_state) {
+    // Validate the Email is not taken.
+    $email = $form_state->getValue('email');
+    if (!empty($email) && $this->validateExistingEmail($email)) {
+      $form_state->setError($form['email'], $this->t('The email %email is already taken.', ['%email' => $email]));
+    }
     parent::validateForm($form, $form_state);
   }
 
@@ -276,7 +392,7 @@ class MultiStepRegistrationForm extends FormBase {
     $form_state->setRebuild();
     $form_state->setStorage([]);
     // Display result.
-    \Drupal::messenger()->addMessage($this->t('The new user @email has been created.', ['@email' => $form_state->getValue('email')]));
+    \Drupal::messenger()->addMessage($this->t('The new user %email has been created.', ['%email' => $form_state->getValue('email')]));
   }
 
 }
