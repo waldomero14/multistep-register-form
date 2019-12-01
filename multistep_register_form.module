@@ -1,0 +1,24 @@
+<?php
+
+/**
+ * @file
+ * Contains multistep_register_form.module.
+ */
+
+use Drupal\Core\Routing\RouteMatchInterface;
+
+/**
+ * Implements hook_help().
+ */
+function multistep_register_form_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
+    // Main module help for the multistep_register_form module.
+    case 'help.page.multistep_register_form':
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('Creates a multistep form for the registration of new users.') . '</p>';
+      return $output;
+
+    default:
+  }
+}

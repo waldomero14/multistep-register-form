@@ -1,0 +1,7 @@
+name: 'multistep_register_form'
+type: module
+description: 'Creates a multistep form for the registration of new users.'
+core: 8.x
+package: 'Custom'
+dependencies:
+  - user
